@@ -4,8 +4,12 @@ import socket, os   # Only to get our UID
 import time
 
 HOST = "localhost"
-SEND_SECS = 1.0/1000 # On my laptop, the mosquitto broker uses only about 1% of a CPU per 1000 messages/sec
-
+SEND_SECS = 1.0/2000
+# On my 4-CPU laptop, per 1000 messages/sec:
+#    the mosquitto broker uses only about 1% of a CPU
+#    this client (doing pub+sub) uses about 10x this (Python overhead?)
+# But for reasons I don't quite understand, I can't run broker plus 1 client at more than about 2000 messages/sec
+ 
 g_startTime = 0
 g_txs=0
 g_rxs=0
@@ -39,7 +43,7 @@ def on_message(mosq, obj, msg):
     global g_rxs
     g_rxs += 1
     if(SEND_SECS > 0.1):
-        print "Message received on topic "+msg.topic+" with QoS "+str(msg.qos)+" and payload "+msg.payload    
+        print "Message received: Topic='"+msg.topic+"' payload='"+msg.payload+"' QoS="+str(msg.qos)
 
 def main():
     global g_startTime
@@ -57,14 +61,25 @@ def main():
     client.connect(HOST)
     client.subscribe("my/topic",0)
     #client.subscribe("$SYS/#",0)
-    
+   
+    client.loop_start()	# Start a separate thread (efficient alternative to calling client.loop() repeatedly in our main loop)
+
+    sends = 0
+    startTime = time.time()
     while True:
-        client.loop(0)  # Means we will consume 100% of a CPU, by definition, since we never sleep!
-        if(time.time() > lastSent+SEND_SECS):
+        # client.loop(0)  # Don't use, as consumes 100% of a CPU
+        secsToNext = sends*SEND_SECS - (time.time() - startTime)
+        if secsToNext < -1:	
+            print secsToNext
+            print "Failing to keep up"
+        if(secsToNext <= 0):
             lastSent = time.time()
             client.publish("my/topic","hello from "+g_UID,1)
-            print "Rxs:",g_rxs,"=",g_rxs/(time.time()-g_startTime),"/sec",
-            print "Txs:",g_txs,"=",g_txs/(time.time()-g_startTime),"/sec"
+            sends+=1
+            # print "Rxs:",g_rxs,"=",g_rxs/(time.time()-g_startTime),"/sec",
+            # print "Txs:",g_txs,"=",g_txs/(time.time()-g_startTime),"/sec"
+        else:
+            time.sleep(secsToNext)
                 
     #client.unsubscribe("my/topic")
     #client.disconnect()
